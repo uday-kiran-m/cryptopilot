@@ -15,52 +15,83 @@ CANDLE_LIMIT = 100
 
 TRADE_QUEUE_JSON = """
 [
-  {
+   {
     "asset_name": "BTCUSDT",
     "entry_condition": "RSI > 45 AND EMA20 > EMA50",
     "exit_condition": "RSI < 35 OR EMA20 < EMA50",
-    "target": 78000,
-    "stop_loss": 74000,
+    "target": 79000,
+    "stop_loss": 74500,
     "position_size": 1000,
     "timeframe": "5m",
     "valid_until": "2026-04-22T23:59:59"
-  }
+  },
+  {
+  "asset_name": "BTCUSDT",
+  "entry_condition": "RSI > 30",
+  "exit_condition": "RSI > 40",
+  "target": 77000,
+  "stop_loss": 74000,
+  "position_size": 1000,
+  "timeframe": "5m",
+  "valid_until": "2026-04-22T23:59:59"
+}
 ]
 """
 
 
-def print_event(event: dict, queue_engine: TradeQueueEngine, refresh_type: str) -> None:
+def build_market_snapshot_payload(event: dict, refresh_type: str) -> dict:
     indicators = event.get("indicators")
+    return {
+        "asset_name": event.get("asset_name"),
+        "timeframe": event.get("timeframe"),
+        "refresh_type": refresh_type,
+        "captured_at": datetime.now().isoformat(),
+        "indicators": None
+        if indicators is None
+        else {
+            "price": indicators.price,
+            "rsi": indicators.rsi,
+            "ema20": indicators.ema20,
+            "ema50": indicators.ema50,
+            "macd": indicators.macd,
+            "macd_signal": indicators.macd_signal,
+            "bollinger_upper": indicators.bollinger_upper,
+            "bollinger_middle": indicators.bollinger_middle,
+            "bollinger_lower": indicators.bollinger_lower,
+        },
+    }
+
+
+def build_portfolio_summary_payload(event: dict, queue_engine: TradeQueueEngine) -> dict:
     latest_prices = {}
+    indicators = event.get("indicators")
     if indicators is not None:
         latest_prices[event["asset_name"]] = indicators.price
 
     summary = queue_engine.queue_summary(latest_prices=latest_prices)
+    return summary["portfolio"]
 
-    print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]")
-    print(f"Trade ID: {event['trade_id']} | Asset: {event['asset_name']}")
-    print(f"Refresh: {refresh_type}")
-    print(f"Action: {event['action']} | Status: {event['status']}")
-    print(f"Explanation: {event['reason']}")
 
-    if indicators is not None:
-        print(
-            "Indicators: "
-            f"price={indicators.price:.2f}, "
-            f"rsi={indicators.rsi}, "
-            f"ema20={indicators.ema20}, "
-            f"ema50={indicators.ema50}, "
-            f"macd={indicators.macd}, "
-            f"macd_signal={indicators.macd_signal}, "
-            f"bb_upper={indicators.bollinger_upper}, "
-            f"bb_middle={indicators.bollinger_middle}, "
-            f"bb_lower={indicators.bollinger_lower}"
-        )
+def build_event_payload(event: dict) -> dict:
+    return {
+        "trade_id": event.get("trade_id"),
+        "asset_name": event.get("asset_name"),
+        "timeframe": event.get("timeframe"),
+        "action": event.get("action"),
+        "status": event.get("status"),
+        "reason": event.get("reason"),
+        "pnl_usd": event.get("pnl_usd"),
+        "generated_at": datetime.now().isoformat(),
+    }
 
-    if "pnl_usd" in event:
-        print(f"Realized PnL: {event['pnl_usd']}")
 
-    print(f"Queue Summary: {json.dumps(summary, default=str)}")
+def print_event(event: dict, queue_engine: TradeQueueEngine, refresh_type: str) -> None:
+    payload = {
+        "event": build_event_payload(event),
+        "market_snapshot": build_market_snapshot_payload(event, refresh_type),
+        "portfolio_summary": build_portfolio_summary_payload(event, queue_engine),
+    }
+    print(json.dumps(payload, default=str, indent=2))
 
 
 def refresh_snapshots(

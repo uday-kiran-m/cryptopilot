@@ -261,6 +261,7 @@ class TradeQueueEngine:
             return {
                 "trade_id": trade.trade_id,
                 "asset_name": trade.asset_name,
+                "timeframe":trade.timeframe,
                 "status": trade.status,
                 "action": "EXPIRE",
                 "reason": trade.exit_reason,
@@ -271,6 +272,7 @@ class TradeQueueEngine:
             return {
                 "trade_id": trade.trade_id,
                 "asset_name": trade.asset_name,
+                "timeframe":trade.timeframe,
                 "status": trade.status,
                 "action": "WAIT",
                 "reason": "Another position is already open for this asset.",
@@ -282,6 +284,7 @@ class TradeQueueEngine:
             return {
                 "trade_id": trade.trade_id,
                 "asset_name": trade.asset_name,
+                "timeframe":trade.timeframe,
                 "status": trade.status,
                 "action": "WAIT",
                 "reason": reason,
@@ -297,6 +300,7 @@ class TradeQueueEngine:
             return {
                 "trade_id": trade.trade_id,
                 "asset_name": trade.asset_name,
+                "timeframe":trade.timeframe,
                 "status": trade.status,
                 "action": "WAIT",
                 "reason": result["reason"],
@@ -310,6 +314,7 @@ class TradeQueueEngine:
         return {
             "trade_id": trade.trade_id,
             "asset_name": trade.asset_name,
+            "timeframe":trade.timeframe,
             "status": trade.status,
             "action": "BUY",
             "reason": reason,
@@ -339,6 +344,8 @@ class TradeQueueEngine:
             return {
                 "trade_id": trade.trade_id,
                 "asset_name": trade.asset_name,
+                "timeframe":trade.timeframe,
+                "timeframe":trade.timeframe,
                 "status": trade.status,
                 "action": "MONITOR",
                 "reason": "Trade is open and waiting for stop loss, target, or exit condition.",
@@ -356,6 +363,7 @@ class TradeQueueEngine:
         return {
             "trade_id": trade.trade_id,
             "asset_name": trade.asset_name,
+            "timeframe":trade.timeframe,
             "status": trade.status,
             "action": "SELL",
             "reason": reason,
@@ -382,6 +390,7 @@ class TradeQueueEngine:
                     {
                         "trade_id": trade.trade_id,
                         "asset_name": trade.asset_name,
+                        "timeframe":trade.timeframe,
                         "status": trade.status,
                         "action": "WAIT",
                         "reason": "No market snapshot available yet.",
