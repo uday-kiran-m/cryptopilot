@@ -18,7 +18,7 @@ from plotly.subplots import make_subplots
 from src.dashboard.shared.utils import set_page_config, inject_custom_css, action_badge, render_confidence_bar
 from src.dashboard.shared.state import SessionState, CacheManager
 from src.dashboard.shared.database import Database
-from src.dashboard.pages import news, xai, chat, audit
+from src.dashboard.pages import news, xai, chat, audit, trading_cycle
 
 
 st.set_page_config(
@@ -226,6 +226,7 @@ SessionState.init()
 PAGES = {
     "📊 Markets": "markets",
     "🎯 Signals": "signals",
+    "🔄 Trading Cycle": "trading_cycle",
     "💼 Portfolio": "portfolio",
     "📰 News": "news",
     "🤖 Explainable AI": "xai",
@@ -615,11 +616,13 @@ def render_portfolio_page(symbol: str, use_stubs: bool):
 def main():
     """Main application entry point."""
     selected_page, symbol, use_stubs = render_sidebar()
-    
+
     if selected_page == "📊 Markets":
         render_markets_page(symbol, use_stubs)
     elif selected_page == "🎯 Signals":
         render_signals_page(symbol, use_stubs)
+    elif selected_page == "🔄 Trading Cycle":
+        trading_cycle.render_trading_cycle_page()
     elif selected_page == "💼 Portfolio":
         render_portfolio_page(symbol, use_stubs)
     elif selected_page == "📰 News":

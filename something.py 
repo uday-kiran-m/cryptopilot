@@ -1,0 +1,5 @@
+1. Define portfolio beginning
+2. Start listening to live data on all 3 assets 
+3. Instantiate sentiment analyser, analyst , risk manager , 
+4. Instantiate trade queue
+5. Start calling the agents' functions
