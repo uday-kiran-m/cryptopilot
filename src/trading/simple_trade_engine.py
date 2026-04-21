@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 try:
@@ -28,30 +30,94 @@ except ImportError:
     )
 
 
+def _parse_datetime(value: str) -> datetime:
+    normalized = value.strip().replace("Z", "+00:00")
+    return datetime.fromisoformat(normalized)
+
+
+def _datetime_to_string(value: datetime | None) -> str | None:
+    return None if value is None else value.isoformat()
+
+
+@dataclass
+class TradeRequest:
+    asset_name: str
+    entry_condition: str
+    exit_condition: str
+    target: float
+    stop_loss: float
+    position_size: float
+    timeframe: str
+    valid_until: datetime
+    trade_id: str
+    status: str = "queued"
+    entry_price: float | None = None
+    exit_price: float | None = None
+    entry_time: datetime | None = None
+    exit_time: datetime | None = None
+    entry_reason: str | None = None
+    exit_reason: str | None = None
+    pnl_usd: float | None = None
+
+    @property
+    def market_key(self) -> tuple[str, str]:
+        return self.asset_name.upper(), self.timeframe
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "trade_id": self.trade_id,
+            "asset_name": self.asset_name,
+            "timeframe": self.timeframe,
+            "entry_condition": self.entry_condition,
+            "exit_condition": self.exit_condition,
+            "target": self.target,
+            "stop_loss": self.stop_loss,
+            "position_size": self.position_size,
+            "valid_until": _datetime_to_string(self.valid_until),
+            "status": self.status,
+            "entry_price": self.entry_price,
+            "exit_price": self.exit_price,
+            "entry_time": _datetime_to_string(self.entry_time),
+            "exit_time": _datetime_to_string(self.exit_time),
+            "entry_reason": self.entry_reason,
+            "exit_reason": self.exit_reason,
+            "pnl_usd": self.pnl_usd,
+        }
+
+
+@dataclass
+class MarketSnapshot:
+    asset_name: str
+    timeframe: str
+    indicators: IndicatorSnapshot
+    last_indicator_refresh: datetime
+    last_price_refresh: datetime
+
+    @property
+    def market_key(self) -> tuple[str, str]:
+        return self.asset_name.upper(), self.timeframe
+
+
 class Trade:
-    """Simple paper trading class driven only by JSON conditions."""
+    """Single-trade helper kept for direct evaluation paths."""
 
     def __init__(
         self,
         stock_name: str,
-        entry_conditions: dict[str, Any] | None = None,
-        exit_conditions: dict[str, Any] | None = None,
-        entry_condition_expr: str | None = None,
-        exit_condition_expr: str | None = None,
-        trade_size_usd: float = 10_000.0,
-        position_size: float | None = None,
-        risk_reward_ratio: float | None = None,
+        entry_condition_expr: str,
+        exit_condition_expr: str,
+        target: float,
+        stop_loss: float,
+        position_size: float,
         interval: str = "1h",
         portfolio: PaperPortfolio | None = None,
     ):
         self.stock_name = stock_name.upper()
-        self.entry_conditions = entry_conditions or {}
-        self.exit_conditions = exit_conditions or {}
         self.entry_condition_expr = entry_condition_expr
         self.exit_condition_expr = exit_condition_expr
-        self.trade_size_usd = trade_size_usd
+        self.target = target
+        self.stop_loss = stop_loss
         self.position_size = position_size
-        self.risk_reward_ratio = risk_reward_ratio
         self.interval = interval
         self.portfolio = portfolio or PaperPortfolio()
 
@@ -63,21 +129,14 @@ class Trade:
     @classmethod
     def from_json(cls, config_json: str, portfolio_usd: float = DEFAULT_PORTFOLIO_USD) -> "Trade":
         data = cls._load_config(config_json)
-        asset = data.get("asset", data.get("stock_name"))
-        if asset is None:
-            raise KeyError("config must include 'asset' or 'stock_name'")
-
-        timeframe = data.get("timeframe", data.get("interval", "1h"))
         return cls(
-            stock_name=asset,
-            entry_conditions=data.get("entry", {}),
-            exit_conditions=data.get("exit", {}),
-            entry_condition_expr=data.get("entry_condition"),
-            exit_condition_expr=data.get("exit_condition"),
-            trade_size_usd=data.get("trade_size_usd", 10_000.0),
-            position_size=data.get("position_size"),
-            risk_reward_ratio=data.get("risk_reward_ratio"),
-            interval=timeframe,
+            stock_name=data["asset_name"],
+            entry_condition_expr=data["entry_condition"],
+            exit_condition_expr=data["exit_condition"],
+            target=float(data["target"]),
+            stop_loss=float(data["stop_loss"]),
+            position_size=float(data["position_size"]),
+            interval=data["timeframe"],
             portfolio=PaperPortfolio(cash_usd=portfolio_usd),
         )
 
@@ -86,129 +145,271 @@ class Trade:
         return fetch_binance_klines(symbol=symbol, interval=interval, limit=limit)
 
     @staticmethod
-    def calculate_indicators(candles: list[Candle]):
+    def calculate_indicators(candles: list[Candle]) -> IndicatorSnapshot:
         return calculate_indicators(candles)
 
     @staticmethod
     def fetch_latest_price(symbol: str) -> float:
         return fetch_latest_price(symbol)
 
-    def _legacy_condition_reason(self, indicators, conditions: dict[str, Any]) -> tuple[bool, str]:
-        for condition_name, expected_value in conditions.items():
-            if condition_name == "rsi_greater_than":
-                if indicators.rsi is None or indicators.rsi <= float(expected_value):
-                    return False, condition_name
-            elif condition_name == "rsi_less_than":
-                if indicators.rsi is None or indicators.rsi >= float(expected_value):
-                    return False, condition_name
-            elif condition_name == "price_greater_than_ema20":
-                if indicators.ema20 is None or indicators.price <= indicators.ema20:
-                    return False, condition_name
-            elif condition_name == "price_less_than_ema20":
-                if indicators.ema20 is None or indicators.price >= indicators.ema20:
-                    return False, condition_name
-            elif condition_name == "ema20_greater_than_ema50":
-                if indicators.ema20 is None or indicators.ema50 is None or indicators.ema20 <= indicators.ema50:
-                    return False, condition_name
-            elif condition_name == "ema20_less_than_ema50":
-                if indicators.ema20 is None or indicators.ema50 is None or indicators.ema20 >= indicators.ema50:
-                    return False, condition_name
-            elif condition_name == "macd_greater_than_signal":
-                if indicators.macd is None or indicators.macd_signal is None or indicators.macd <= indicators.macd_signal:
-                    return False, condition_name
-            elif condition_name == "macd_less_than_signal":
-                if indicators.macd is None or indicators.macd_signal is None or indicators.macd >= indicators.macd_signal:
-                    return False, condition_name
-            elif condition_name == "price_greater_than_bollinger_middle":
-                if indicators.bollinger_middle is None or indicators.price <= indicators.bollinger_middle:
-                    return False, condition_name
-            elif condition_name == "price_less_than_bollinger_middle":
-                if indicators.bollinger_middle is None or indicators.price >= indicators.bollinger_middle:
-                    return False, condition_name
-            elif condition_name == "price_greater_than_bollinger_upper":
-                if indicators.bollinger_upper is None or indicators.price <= indicators.bollinger_upper:
-                    return False, condition_name
-            elif condition_name == "price_less_than_bollinger_lower":
-                if indicators.bollinger_lower is None or indicators.price >= indicators.bollinger_lower:
-                    return False, condition_name
-            else:
-                return False, f"unsupported condition: {condition_name}"
-        return True, "all conditions met"
 
-    def _match_conditions(self, indicators, expression: str | None, conditions: dict[str, Any]) -> tuple[bool, str]:
-        if expression:
-            matched, reason = evaluate_condition_expression(indicators, expression)
-            return matched, explain_condition_result(expression, matched, reason)
-        return self._legacy_condition_reason(indicators, conditions)
+class TradeQueueEngine:
+    """Queue-driven paper trading engine.
 
-    def _evaluate_from_indicators(self, indicators: IndicatorSnapshot) -> dict[str, Any]:
-        has_position = self.stock_name in self.portfolio.positions
+    - queued trades wait for entry conditions until `valid_until`
+    - entered trades are checked for stop loss, target, and exit condition
+    - exited trades update paper portfolio and realized PnL
+    """
 
-        if not has_position:
-            matched, reason = self._match_conditions(indicators, self.entry_condition_expr, self.entry_conditions)
-            if matched:
-                trade_value = self.trade_size_usd
-                if self.position_size is not None:
-                    trade_value = float(self.position_size) * indicators.price
-                result = self.portfolio.buy(self.stock_name, indicators.price, trade_value)
-                return {
-                    "action": "BUY",
-                    "reason": reason,
-                    "result": result,
-                    "indicators": indicators,
-                    "risk_reward_ratio": self.risk_reward_ratio,
-                }
+    def __init__(
+        self,
+        trade_queue: list[TradeRequest] | None = None,
+        portfolio: PaperPortfolio | None = None,
+    ):
+        self.trade_queue = trade_queue or []
+        self.portfolio = portfolio or PaperPortfolio()
+
+    @staticmethod
+    def fetch_binance_klines(symbol: str, interval: str = "1h", limit: int = 200) -> list[Candle]:
+        return fetch_binance_klines(symbol=symbol, interval=interval, limit=limit)
+
+    @staticmethod
+    def calculate_indicators(candles: list[Candle]) -> IndicatorSnapshot:
+        return calculate_indicators(candles)
+
+    @staticmethod
+    def fetch_latest_price(symbol: str) -> float:
+        return fetch_latest_price(symbol)
+
+    @classmethod
+    def _load_payload(cls, payload_json: str) -> Any:
+        cleaned = re.sub(r",(\s*[}\]])", r"\1", payload_json.strip())
+        return json.loads(cleaned)
+
+    @classmethod
+    def _trade_from_dict(cls, data: dict[str, Any], index: int) -> TradeRequest:
+        return TradeRequest(
+            asset_name=data["asset_name"].upper(),
+            entry_condition=data["entry_condition"],
+            exit_condition=data["exit_condition"],
+            target=float(data["target"]),
+            stop_loss=float(data["stop_loss"]),
+            position_size=float(data["position_size"]),
+            timeframe=data["timeframe"],
+            valid_until=_parse_datetime(data["valid_until"]),
+            trade_id=data.get("trade_id", f"trade-{index + 1}"),
+        )
+
+    @classmethod
+    def from_json(cls, payload_json: str, portfolio_usd: float = DEFAULT_PORTFOLIO_USD) -> "TradeQueueEngine":
+        payload = cls._load_payload(payload_json)
+        if isinstance(payload, dict):
+            payload = [payload]
+        if not isinstance(payload, list):
+            raise TypeError("trade queue payload must be a JSON object or JSON list")
+
+        trades = [cls._trade_from_dict(item, index) for index, item in enumerate(payload)]
+        return cls(trade_queue=trades, portfolio=PaperPortfolio(cash_usd=portfolio_usd))
+
+    def add_trade_from_json(self, payload_json: str) -> TradeRequest:
+        payload = self._load_payload(payload_json)
+        if not isinstance(payload, dict):
+            raise TypeError("single trade payload must be a JSON object")
+
+        trade = self._trade_from_dict(payload, len(self.trade_queue))
+        self.trade_queue.append(trade)
+        return trade
+
+    def active_market_keys(self) -> list[tuple[str, str]]:
+        keys = {
+            trade.market_key
+            for trade in self.trade_queue
+            if trade.status in {"queued", "entered"}
+        }
+        return sorted(keys)
+
+    def prune_finished_trades(self) -> list[TradeRequest]:
+        finished = [
+            trade
+            for trade in self.trade_queue
+            if trade.status in {"exited", "expired"}
+        ]
+        self.trade_queue = [
+            trade
+            for trade in self.trade_queue
+            if trade.status not in {"exited", "expired"}
+        ]
+        return finished
+
+    def _match_condition(self, indicators: IndicatorSnapshot, expression: str) -> tuple[bool, str]:
+        matched, reason = evaluate_condition_expression(indicators, expression)
+        return matched, explain_condition_result(expression, matched, reason)
+
+    def _position_is_open(self, asset_name: str) -> bool:
+        return asset_name.upper() in self.portfolio.positions
+
+    def _evaluate_entry(
+        self,
+        trade: TradeRequest,
+        snapshot: MarketSnapshot,
+        now: datetime,
+    ) -> dict[str, Any]:
+        if trade.valid_until <= now:
+            trade.status = "expired"
+            trade.exit_time = now
+            trade.exit_reason = "Trade expired before entry."
             return {
-                "action": "HOLD",
-                "reason": reason,
-                "indicators": indicators,
-                "risk_reward_ratio": self.risk_reward_ratio,
+                "trade_id": trade.trade_id,
+                "asset_name": trade.asset_name,
+                "status": trade.status,
+                "action": "EXPIRE",
+                "reason": trade.exit_reason,
+                "indicators": snapshot.indicators,
             }
 
-        matched, reason = self._match_conditions(indicators, self.exit_condition_expr, self.exit_conditions)
-        if matched:
-            result = self.portfolio.sell(self.stock_name, indicators.price, reason)
+        if self._position_is_open(trade.asset_name):
             return {
-                "action": "SELL",
-                "reason": reason,
-                "result": result,
-                "indicators": indicators,
-                "risk_reward_ratio": self.risk_reward_ratio,
+                "trade_id": trade.trade_id,
+                "asset_name": trade.asset_name,
+                "status": trade.status,
+                "action": "WAIT",
+                "reason": "Another position is already open for this asset.",
+                "indicators": snapshot.indicators,
             }
 
+        matched, reason = self._match_condition(snapshot.indicators, trade.entry_condition)
+        if not matched:
+            return {
+                "trade_id": trade.trade_id,
+                "asset_name": trade.asset_name,
+                "status": trade.status,
+                "action": "WAIT",
+                "reason": reason,
+                "indicators": snapshot.indicators,
+            }
+
+        result = self.portfolio.buy(
+            symbol=trade.asset_name,
+            price=snapshot.indicators.price,
+            usd_amount=trade.position_size,
+        )
+        if result["status"] != "executed":
+            return {
+                "trade_id": trade.trade_id,
+                "asset_name": trade.asset_name,
+                "status": trade.status,
+                "action": "WAIT",
+                "reason": result["reason"],
+                "indicators": snapshot.indicators,
+            }
+
+        trade.status = "entered"
+        trade.entry_price = snapshot.indicators.price
+        trade.entry_time = now
+        trade.entry_reason = reason
         return {
-            "action": "HOLD",
+            "trade_id": trade.trade_id,
+            "asset_name": trade.asset_name,
+            "status": trade.status,
+            "action": "BUY",
             "reason": reason,
-            "indicators": indicators,
-            "risk_reward_ratio": self.risk_reward_ratio,
+            "result": result,
+            "indicators": snapshot.indicators,
         }
 
-    def evaluate_indicator_snapshot(self, indicators: IndicatorSnapshot) -> dict[str, Any]:
-        return self._evaluate_from_indicators(indicators)
+    def _evaluate_exit(
+        self,
+        trade: TradeRequest,
+        snapshot: MarketSnapshot,
+        now: datetime,
+    ) -> dict[str, Any]:
+        price = snapshot.indicators.price
+        exit_reasons: list[str] = []
 
-    def evaluate_latest_candle(self, candles: list[Candle]) -> dict[str, Any]:
-        indicators = calculate_indicators(candles)
-        return self._evaluate_from_indicators(indicators)
+        if price <= trade.stop_loss:
+            exit_reasons.append(f"Stop loss hit because price {price:.2f} is at or below {trade.stop_loss:.2f}.")
+        if price >= trade.target:
+            exit_reasons.append(f"Target hit because price {price:.2f} is at or above {trade.target:.2f}.")
 
-    def monitor_and_trade(self, candles: list[Candle], warmup_period: int = 60) -> list[dict[str, Any]]:
-        results: list[dict[str, Any]] = []
-        for index in range(warmup_period, len(candles) + 1):
-            results.append(self.evaluate_latest_candle(candles[:index]))
-        return results
+        exit_condition_matched, exit_condition_reason = self._match_condition(snapshot.indicators, trade.exit_condition)
+        if exit_condition_matched:
+            exit_reasons.append(exit_condition_reason)
 
-    def portfolio_summary(self, last_price: float | None = None) -> dict[str, Any]:
-        last_prices = {}
-        if last_price is not None:
-            last_prices[self.stock_name] = last_price
+        if not exit_reasons:
+            return {
+                "trade_id": trade.trade_id,
+                "asset_name": trade.asset_name,
+                "status": trade.status,
+                "action": "MONITOR",
+                "reason": "Trade is open and waiting for stop loss, target, or exit condition.",
+                "indicators": snapshot.indicators,
+            }
+
+        reason = " ".join(exit_reasons)
+        result = self.portfolio.sell(trade.asset_name, price=price, reason=reason)
+        trade.status = "exited"
+        trade.exit_price = price
+        trade.exit_time = now
+        trade.exit_reason = reason
+        trade.pnl_usd = result["trade"]["pnl_usd"] if result["status"] == "executed" else None
 
         return {
-            "cash_usd": self.portfolio.cash_usd,
-            "positions": list(self.portfolio.positions.keys()),
-            "trade_count": len(self.portfolio.trade_log),
-            "total_value_usd": self.portfolio.total_value(last_prices),
-            "trade_log": self.portfolio.trade_log,
+            "trade_id": trade.trade_id,
+            "asset_name": trade.asset_name,
+            "status": trade.status,
+            "action": "SELL",
+            "reason": reason,
+            "result": result,
+            "indicators": snapshot.indicators,
+            "pnl_usd": trade.pnl_usd,
+        }
+
+    def process_queue(
+        self,
+        snapshots: dict[tuple[str, str], MarketSnapshot],
+        now: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        now = now or datetime.now()
+        events: list[dict[str, Any]] = []
+
+        for trade in self.trade_queue:
+            if trade.status not in {"queued", "entered"}:
+                continue
+
+            snapshot = snapshots.get(trade.market_key)
+            if snapshot is None:
+                events.append(
+                    {
+                        "trade_id": trade.trade_id,
+                        "asset_name": trade.asset_name,
+                        "status": trade.status,
+                        "action": "WAIT",
+                        "reason": "No market snapshot available yet.",
+                    }
+                )
+                continue
+
+            if trade.status == "queued":
+                events.append(self._evaluate_entry(trade, snapshot, now))
+            else:
+                events.append(self._evaluate_exit(trade, snapshot, now))
+
+        self.prune_finished_trades()
+        return events
+
+    def queue_summary(self, latest_prices: dict[str, float] | None = None) -> dict[str, Any]:
+        latest_prices = latest_prices or {}
+        return {
+            "queued_trades": [trade.to_dict() for trade in self.trade_queue],
+            "portfolio": {
+                "cash_usd": self.portfolio.cash_usd,
+                "positions": list(self.portfolio.positions.keys()),
+                "trade_count": len(self.portfolio.trade_log),
+                "total_value_usd": self.portfolio.total_value(latest_prices),
+                "trade_log": self.portfolio.trade_log,
+            },
         }
 
 
-class trade(Trade):
+class trade(TradeQueueEngine):
     """Lowercase alias kept only to match the requested class name."""
