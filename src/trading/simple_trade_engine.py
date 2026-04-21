@@ -9,18 +9,22 @@ try:
     from .simple_trade_market import (
         Candle,
         DEFAULT_PORTFOLIO_USD,
+        IndicatorSnapshot,
         PaperPortfolio,
         calculate_indicators,
         fetch_binance_klines,
+        fetch_latest_price,
     )
 except ImportError:
     from simple_trade_conditions import evaluate_condition_expression, explain_condition_result
     from simple_trade_market import (
         Candle,
         DEFAULT_PORTFOLIO_USD,
+        IndicatorSnapshot,
         PaperPortfolio,
         calculate_indicators,
         fetch_binance_klines,
+        fetch_latest_price,
     )
 
 
@@ -85,6 +89,10 @@ class Trade:
     def calculate_indicators(candles: list[Candle]):
         return calculate_indicators(candles)
 
+    @staticmethod
+    def fetch_latest_price(symbol: str) -> float:
+        return fetch_latest_price(symbol)
+
     def _legacy_condition_reason(self, indicators, conditions: dict[str, Any]) -> tuple[bool, str]:
         for condition_name, expected_value in conditions.items():
             if condition_name == "rsi_greater_than":
@@ -133,8 +141,7 @@ class Trade:
             return matched, explain_condition_result(expression, matched, reason)
         return self._legacy_condition_reason(indicators, conditions)
 
-    def evaluate_latest_candle(self, candles: list[Candle]) -> dict[str, Any]:
-        indicators = calculate_indicators(candles)
+    def _evaluate_from_indicators(self, indicators: IndicatorSnapshot) -> dict[str, Any]:
         has_position = self.stock_name in self.portfolio.positions
 
         if not has_position:
@@ -175,6 +182,13 @@ class Trade:
             "indicators": indicators,
             "risk_reward_ratio": self.risk_reward_ratio,
         }
+
+    def evaluate_indicator_snapshot(self, indicators: IndicatorSnapshot) -> dict[str, Any]:
+        return self._evaluate_from_indicators(indicators)
+
+    def evaluate_latest_candle(self, candles: list[Candle]) -> dict[str, Any]:
+        indicators = calculate_indicators(candles)
+        return self._evaluate_from_indicators(indicators)
 
     def monitor_and_trade(self, candles: list[Candle], warmup_period: int = 60) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []

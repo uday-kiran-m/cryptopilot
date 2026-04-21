@@ -121,6 +121,16 @@ def fetch_binance_klines(symbol: str, interval: str = "1h", limit: int = 200) ->
     return candles
 
 
+def fetch_latest_price(symbol: str) -> float:
+    response = requests.get(
+        "https://api.binance.com/api/v3/ticker/price",
+        params={"symbol": symbol.upper()},
+        timeout=10,
+    )
+    response.raise_for_status()
+    return float(response.json()["price"])
+
+
 def _to_dataframe(candles: list[Candle]) -> pd.DataFrame:
     return pd.DataFrame({"close": [c.close for c in candles]})
 
